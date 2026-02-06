@@ -23,6 +23,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4 curl-cffi
 
+      # THIS IS THE CRITICAL PART THAT WAS MISSING OR BROKEN
       - name: Run Monitor
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
