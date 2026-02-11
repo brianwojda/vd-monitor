@@ -18,15 +18,20 @@ HEADERS = {
 }
 
 SITES = [
-    # SHOPIFY SITES (Auto-Detect)
+    # --- SHOPIFY SITES (Auto-Detect via products.json) ---
     {'name': 'Vuja De Official', 'url': 'https://vujade-studio.com/collections/all', 'type': 'shopify'},
     {'name': 'Adelaide Addition', 'url': 'https://adelaide-addition.com/collections/vujade', 'type': 'shopify'},
     {'name': 'Why are you here?', 'url': 'https://whyareyouhere.jp/collections/vujade', 'type': 'shopify'},
     {'name': 'Refnet', 'url': 'https://www.refnet.tv/collections/vuja-de', 'type': 'shopify'},
-    {'name': 'Komune', 'url': 'https://komune.space/shop/vuja-d%C3%A9', 'type': 'shopify'},
     
-    # CUSTOM SITES (Manual Selectors)
+    # --- CUSTOM SITES (Manual CSS Selectors) ---
+    # Komune (Headless/WooCommerce) -> targeting the link elements directly
+    {'name': 'Komune', 'url': 'https://komune.space/shop/vuja-d%C3%A9', 'type': 'custom', 'css_selector': 'a[href*="/shop/vuja-de"]'},
+    
+    # BEAMS -> targeting the list item container
     {'name': 'BEAMS (Japan)', 'url': 'https://www.beams.co.jp/brand/005416/', 'type': 'custom', 'css_selector': 'li.beams-list-image-item'},
+    
+    # Barneys -> targeting the list item container
     {'name': 'Barneys Japan', 'url': 'https://onlinestore.barneys.co.jp/items?bc=05918', 'type': 'custom', 'css_selector': '.item_list li, .product-list-item, .js-product-list-item'} 
 ]
 
@@ -103,44 +108,51 @@ def check_custom(site, seen_db):
 
         for item in items:
             try:
-                # 1. GET THE TITLE
-                name_div = item.select_one('.product-name, .product-title, .title, .name, .description, .item_name') 
-                if name_div:
-                    text = name_div.get_text(strip=True)
-                else:
-                    text = item.get_text(strip=True)
-
-                # 2. GET THE LINK
+                # 1. IDENTIFY LINK AND TITLE
+                # If the selector targeted an <a> tag directly (like we did for Komune)
                 if item.name == 'a':
                     link_tag = item
+                    name_text = item.get_text(strip=True)
+                # If the selector targeted a container (div/li), look inside
                 else:
                     link_tag = item.find('a')
+                    
+                    # Try specific title classes often used in e-comm
+                    name_div = item.select_one('.product-name, .product-title, .title, .name, .woocommerce-loop-product__title, .item_name') 
+                    if name_div:
+                        name_text = name_div.get_text(strip=True)
+                    else:
+                        name_text = item.get_text(strip=True)
 
-                if link_tag:
-                    href = link_tag.get('href')
-                    if not href: continue
+                if not link_tag: continue
 
-                    # 3. FIX RELATIVE URLS
-                    if not href.startswith('http'):
-                        if site['url'].endswith('/'):
-                             base_domain = site['url'].rstrip('/')
-                        else:
-                             parsed_uri = urlparse(site['url'])
-                             base_domain = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_uri)
-                        
-                        if href.startswith('/'):
-                            href = base_domain + href
-                        else:
-                             href = base_domain + '/' + href
+                # 2. GET HREF
+                href = link_tag.get('href')
+                if not href: continue
 
-                    unique_id = href 
-                    if unique_id not in seen_db.get(site['name'], []):
-                        # Filter out empty or junk titles
-                        if len(text) > 2:
-                            print(f"Found new: {text[:30]}...")
-                            send_discord_ping(text, href, site['name'])
-                            if site['name'] not in seen_db: seen_db[site['name']] = []
-                            seen_db[site['name']].append(unique_id)
+                # 3. FIX RELATIVE URLS
+                if not href.startswith('http'):
+                    if site['url'].endswith('/'):
+                         base_domain = site['url'].rstrip('/')
+                    else:
+                         parsed_uri = urlparse(site['url'])
+                         base_domain = '{uri.scheme}://{uri.netloc}'.format(uri=parsed_uri)
+                    
+                    if href.startswith('/'):
+                        href = base_domain + href
+                    else:
+                         href = base_domain + '/' + href
+
+                # 4. CHECK DATABASE
+                unique_id = href 
+                if unique_id not in seen_db.get(site['name'], []):
+                    # Filter out empty or junk titles
+                    if len(name_text) > 2:
+                        print(f"Found new: {name_text[:30]}...")
+                        send_discord_ping(name_text, href, site['name'])
+                        if site['name'] not in seen_db: seen_db[site['name']] = []
+                        seen_db[site['name']].append(unique_id)
+
             except Exception as e: 
                 continue
     except Exception as e:
