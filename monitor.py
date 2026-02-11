@@ -1,6 +1,7 @@
 from curl_cffi import requests
 import json
 import os
+import re
 import time
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin, unquote
@@ -27,6 +28,18 @@ CUSTOM_KEYWORDS = (
     'vuja%2dde',
     'vuja%2Dde',
     'vuja-d%C3%A9'.lower(),
+)
+
+SOLD_OUT_MARKERS = (
+    'sold out',
+    'soldout',
+    'out of stock',
+    'out-of-stock',
+    'no stock',
+    'not available',
+    '在庫なし',
+    '完売',
+    '欠品',
 )
 
 SITES = [
@@ -81,6 +94,52 @@ def send_discord_ping(product_name, product_link, site_name):
         time.sleep(1) # Safety brake
     except Exception as e:
         print(f"Error sending ping: {e}")
+
+def normalize_text(value):
+    return re.sub(r'\s+', ' ', (value or '').replace('\xa0', ' ')).strip()
+
+def title_from_href(href):
+    path = urlparse(href).path.strip('/')
+    slug = unquote(path.split('/')[-1] if path else '')
+    slug = normalize_text(re.sub(r'[-_]+', ' ', slug))
+    if not slug or slug.isdigit():
+        return href
+    words = slug.split(' ')
+    pretty_words = []
+    for word in words:
+        if len(word) <= 3 and word.isalpha():
+            pretty_words.append(word.upper())
+        else:
+            pretty_words.append(word.capitalize())
+    return ' '.join(pretty_words)
+
+def clean_product_name(name_text, href):
+    cleaned = normalize_text(unquote(name_text or ''))
+    cleaned = re.sub(r'(?i)^sold\s*out[:\-\s]*', '', cleaned)
+    cleaned = re.sub(
+        r'(?i)\b(sold\s*out|soldout|out\s*of\s*stock)\b[:\-\s]*',
+        '',
+        cleaned,
+    )
+    cleaned = re.sub(r'[\$¥€£]\s?\d[\d,]*(?:\.\d{1,2})?$', '', cleaned).strip()
+    cleaned = normalize_text(cleaned)
+    cleaned = cleaned.replace('Vuja Dé', 'Vuja Dé ').replace('Vuja De', 'Vuja De ')
+    cleaned = re.sub(r'(?i)(vuja\s*d[eé])([A-Z])', r'\1 \2', cleaned)
+    cleaned = normalize_text(cleaned)
+    if len(cleaned) <= 2:
+        cleaned = title_from_href(href)
+    return cleaned
+
+def is_sold_out_item(item, link_tag, raw_name_text):
+    status_fields = [raw_name_text]
+    for tag in (item, link_tag):
+        if tag and hasattr(tag, 'get'):
+            status_fields.append(' '.join(tag.get('class', [])))
+            status_fields.append(tag.get('aria-label', '') or '')
+            status_fields.append(tag.get('data-stock-status', '') or '')
+            status_fields.append(tag.get('title', '') or '')
+    status_blob = normalize_text(' '.join(status_fields)).lower()
+    return any(marker in status_blob for marker in SOLD_OUT_MARKERS)
 
 def check_shopify(site, seen_db):
     # Handle standard and non-standard Shopify URLs
@@ -148,6 +207,7 @@ def check_custom(site, seen_db):
 
         print(f"  Parsed items: {len(items)}{' (fallback)' if used_fallback else ''}")
 
+        processed_hrefs = set()
         for item in items:
             try:
                 # 1. IDENTIFY LINK AND TITLE
@@ -174,12 +234,21 @@ def check_custom(site, seen_db):
 
                 # 3. NORMALIZE URL
                 href = urljoin(site['url'], href.strip())
+                if href in processed_hrefs:
+                    continue
+                processed_hrefs.add(href)
 
                 # 4. FALLBACK TITLE
                 if len(name_text) <= 2:
                     name_text = link_tag.get('title', '').strip() or link_tag.get_text(strip=True) or href
 
-                # 5. CHECK DATABASE
+                # 5. CLEAN + FILTER
+                raw_name_text = name_text
+                name_text = clean_product_name(name_text, href)
+                if is_sold_out_item(item, link_tag, raw_name_text):
+                    continue
+
+                # 6. CHECK DATABASE
                 unique_id = href
                 if unique_id not in seen_db.get(site['name'], []):
                     if len(name_text) > 2:
