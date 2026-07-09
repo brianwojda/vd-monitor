@@ -57,7 +57,10 @@ SITES = [
     {'name': 'BEAMS (Japan)', 'url': 'https://www.beams.co.jp/brand/005416/', 'type': 'custom', 'css_selector': 'li.beams-list-image-item'},
 
     # Barneys -> product cards in the item list grid
-    {'name': 'Barneys Japan', 'url': 'https://onlinestore.barneys.co.jp/items?bc=05918', 'type': 'custom', 'css_selector': '.p-item-list__item'}
+    {'name': 'Barneys Japan', 'url': 'https://onlinestore.barneys.co.jp/items?bc=05918', 'type': 'custom', 'css_selector': '.p-item-list__item'},
+
+    # Loftman -> product cards in the category grid
+    {'name': 'Loftman', 'url': 'https://loftman.co.jp/shop/c/cvujade/', 'type': 'custom', 'css_selector': 'dl.block-thumbnail-t--goods'}
 ]
 
 # ==========================================
@@ -226,7 +229,7 @@ def check_custom(site, seen_db):
                     name_div = item.select_one(
                         '.product-name, .product-title, .title, .name, '
                         '.woocommerce-loop-product__title, .item_name, '
-                        '.c-item-card__name'
+                        '.c-item-card__name, .block-thumbnail-t--goods-name'
                     )
                     name_text = name_div.get_text(strip=True) if name_div else item.get_text(strip=True)
 
