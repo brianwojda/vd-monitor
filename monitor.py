@@ -50,14 +50,14 @@ SITES = [
     {'name': 'Refnet', 'url': 'https://www.refnet.tv/collections/vuja-de', 'type': 'shopify'},
     
     # --- CUSTOM SITES (Manual CSS Selectors) ---
-    # Komune (Headless/WooCommerce) -> targeting the link elements directly
-    {'name': 'Komune', 'url': 'https://komune.space/shop/vuja-d%C3%A9', 'type': 'custom', 'css_selector': 'a[href*="/shop/vuja-de"]'},
-    
+    # Komune (Headless/WooCommerce) -> product hrefs keep the URL-encoded é (/shop/vuja-d%C3%A9/...)
+    {'name': 'Komune', 'url': 'https://komune.space/shop/vuja-d%C3%A9', 'type': 'custom', 'css_selector': 'a[href*="/shop/vuja-d"]'},
+
     # BEAMS -> targeting the list item container
     {'name': 'BEAMS (Japan)', 'url': 'https://www.beams.co.jp/brand/005416/', 'type': 'custom', 'css_selector': 'li.beams-list-image-item'},
-    
-    # Barneys -> targeting the list item container
-    {'name': 'Barneys Japan', 'url': 'https://onlinestore.barneys.co.jp/items?bc=05918', 'type': 'custom', 'css_selector': '.item_list li, .product-list-item, .js-product-list-item'} 
+
+    # Barneys -> product cards in the item list grid
+    {'name': 'Barneys Japan', 'url': 'https://onlinestore.barneys.co.jp/items?bc=05918', 'type': 'custom', 'css_selector': '.p-item-list__item'}
 ]
 
 # ==========================================
@@ -138,6 +138,10 @@ def is_sold_out_item(item, link_tag, raw_name_text):
             status_fields.append(tag.get('aria-label', '') or '')
             status_fields.append(tag.get('data-stock-status', '') or '')
             status_fields.append(tag.get('title', '') or '')
+    if item is not None and hasattr(item, 'select'):
+        for badge in item.select('.badge, [class*="sold"], [class*="stock"], [class*="label"]'):
+            status_fields.append(' '.join(badge.get('class', [])))
+            status_fields.append(badge.get_text(' ', strip=True))
     status_blob = normalize_text(' '.join(status_fields)).lower()
     return any(marker in status_blob for marker in SOLD_OUT_MARKERS)
 
@@ -147,6 +151,9 @@ def check_shopify(site, seen_db):
     print(f"Checking Shopify: {site['name']}...")
     try:
         r = requests.get(json_url, headers=HEADERS, timeout=30, impersonate="chrome")
+        if r.status_code != 200 or '/password' in str(r.url):
+            print(f"  Skipping {site['name']}: store locked or unavailable (HTTP {r.status_code})")
+            return
         products = r.json().get('products', [])
         for p in products:
             pid = str(p['id'])
@@ -218,7 +225,8 @@ def check_custom(site, seen_db):
                     link_tag = item.find('a')
                     name_div = item.select_one(
                         '.product-name, .product-title, .title, .name, '
-                        '.woocommerce-loop-product__title, .item_name'
+                        '.woocommerce-loop-product__title, .item_name, '
+                        '.c-item-card__name'
                     )
                     name_text = name_div.get_text(strip=True) if name_div else item.get_text(strip=True)
 
@@ -234,6 +242,8 @@ def check_custom(site, seen_db):
 
                 # 3. NORMALIZE URL
                 href = urljoin(site['url'], href.strip())
+                if href.rstrip('/') == site['url'].rstrip('/'):
+                    continue  # link back to the collection page itself, not a product
                 if href in processed_hrefs:
                     continue
                 processed_hrefs.add(href)
