@@ -48,6 +48,7 @@ SITES = [
     {'name': 'Adelaide Addition', 'url': 'https://adelaide-addition.com/collections/vujade', 'type': 'shopify'},
     {'name': 'Why are you here?', 'url': 'https://whyareyouhere.jp/collections/vujade', 'type': 'shopify'},
     {'name': 'Refnet', 'url': 'https://www.refnet.tv/collections/vuja-de', 'type': 'shopify'},
+    {'name': 'Addicted Seoul', 'url': 'https://addictedseoul.com/collections/vuja-de', 'type': 'shopify'},
     
     # --- CUSTOM SITES (Manual CSS Selectors) ---
     # Komune (Headless/WooCommerce) -> product hrefs keep the URL-encoded é (/shop/vuja-d%C3%A9/...)
