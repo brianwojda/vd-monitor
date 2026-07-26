@@ -18,6 +18,12 @@ HEADERS = {
     'Accept-Language': 'en-US,en;q=0.5',
 }
 
+# Shopify rate-limits datacenter IPs (GitHub Actions runners) with 429s.
+RETRY_STATUSES = (429, 503)
+RETRY_ATTEMPTS = 4
+RETRY_BASE_DELAY = 5   # seconds, doubled after each attempt
+RETRY_MAX_DELAY = 60   # ceiling for a server-supplied Retry-After
+
 CUSTOM_KEYWORDS = (
     'vuja',
     'vuja-de',
@@ -150,12 +156,37 @@ def is_sold_out_item(item, link_tag, raw_name_text):
     status_blob = normalize_text(' '.join(status_fields)).lower()
     return any(marker in status_blob for marker in SOLD_OUT_MARKERS)
 
+def retry_after_seconds(r):
+    # Retry-After may be seconds or an HTTP date; only the numeric form is honored.
+    raw = r.headers.get('Retry-After')
+    if not raw:
+        return None
+    try:
+        return max(1, min(int(raw), RETRY_MAX_DELAY))
+    except ValueError:
+        return None
+
+def fetch_with_backoff(url, timeout=30):
+    delay = RETRY_BASE_DELAY
+    for attempt in range(RETRY_ATTEMPTS):
+        r = requests.get(url, headers=HEADERS, timeout=timeout, impersonate="chrome")
+        if r.status_code not in RETRY_STATUSES or attempt == RETRY_ATTEMPTS - 1:
+            return r
+        wait = retry_after_seconds(r) or delay
+        print(f"  HTTP {r.status_code}, retrying in {wait}s ({attempt + 2}/{RETRY_ATTEMPTS})")
+        time.sleep(wait)
+        delay *= 2
+    return r
+
 def check_shopify(site, seen_db):
     # Handle standard and non-standard Shopify URLs
     json_url = site['url'].rstrip('/') + '/products.json'
     print(f"Checking Shopify: {site['name']}...")
     try:
-        r = requests.get(json_url, headers=HEADERS, timeout=30, impersonate="chrome")
+        r = fetch_with_backoff(json_url)
+        if r.status_code in RETRY_STATUSES:
+            print(f"  Skipping {site['name']}: rate limited after {RETRY_ATTEMPTS} attempts (HTTP {r.status_code})")
+            return
         if r.status_code != 200 or '/password' in str(r.url):
             print(f"  Skipping {site['name']}: store locked or unavailable (HTTP {r.status_code})")
             return
