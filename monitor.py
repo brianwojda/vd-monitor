@@ -49,7 +49,6 @@ SOLD_OUT_MARKERS = (
 
 SITES = [
     # --- SHOPIFY SITES (Auto-Detect via products.json) ---
-    {'name': 'Vuja De Official', 'url': 'https://vujade-studio.com/collections/all', 'type': 'shopify'},
     {'name': 'Adelaide Addition', 'url': 'https://adelaide-addition.com/collections/vujade', 'type': 'shopify'},
     {'name': 'Why are you here?', 'url': 'https://whyareyouhere.jp/collections/vujade', 'type': 'shopify'},
     {'name': 'Refnet', 'url': 'https://www.refnet.tv/collections/vuja-de', 'type': 'shopify'},
