@@ -55,6 +55,7 @@ SITES = [
     {'name': 'Refnet', 'url': 'https://www.refnet.tv/collections/vuja-de', 'type': 'shopify'},
     {'name': 'Addicted Seoul', 'url': 'https://addictedseoul.com/collections/vuja-de', 'type': 'shopify'},
     {'name': 'Mars', 'url': 'https://manhole-onlinestore.com/collections/vuja-de', 'type': 'shopify'},
+    {'name': 'Plus81', 'url': 'https://www.plus81.id/en/collections/vuja-de', 'type': 'shopify'},
     
     # --- CUSTOM SITES (Manual CSS Selectors) ---
     # Komune (Headless/WooCommerce) -> product hrefs keep the URL-encoded é (/shop/vuja-d%C3%A9/...)
