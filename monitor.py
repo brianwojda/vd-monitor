@@ -215,16 +215,21 @@ def announce(items, heading, on_sent):
     """Ping Discord about items under one heading, calling on_sent(items) for each batch
     Discord accepts, so nothing is recorded as announced before it really is.
 
-    Returns False if anything could not be sent; those items are retried next run.
+    Only the first message Discord accepts tags @everyone, so a drop is one notification
+    per store however many messages it takes. Returns False if anything could not be sent;
+    those items are retried next run.
     """
     if not DISCORD_WEBHOOK_URL:
         print("  Dry run: not sending")
         return True
     all_sent = True
+    notified = False
     for batch in discord_batches(items):
-        status = post_to_discord({"content": heading, "embeds": batch['embeds']})
+        mention = '' if notified else '@everyone '
+        status = post_to_discord({"content": f"{mention}{heading}", "embeds": batch['embeds']})
         if delivered(status):
             print(f"  Sent {len(batch['items'])} to Discord")
+            notified = True
             on_sent(batch['items'])
             continue
         if status != 400:
@@ -232,8 +237,11 @@ def announce(items, heading, on_sent):
             continue
         # Discord refused the embeds themselves, so fall back to one plain message per item
         for item in batch['items']:
+            mention = '' if notified else '@everyone '
             back = f"\nBack in stock: {', '.join(item['back'])}" if item.get('back') else ''
-            fallback = post_to_discord({"content": f"{heading}\n**{item['name']}**{back}\n{item['link']}"[:2000]})
+            fallback = post_to_discord({"content": f"{mention}{heading}\n**{item['name']}**{back}\n{item['link']}"[:2000]})
+            if delivered(fallback):
+                notified = True
             if delivered(fallback) or fallback == 400:
                 on_sent([item])  # refused twice: give up rather than retry forever
             all_sent = all_sent and delivered(fallback)
@@ -558,14 +566,14 @@ if __name__ == "__main__":
         new_items = [item for item in items if item['id'] not in seen and pingable(site, item)]
         for item in new_items:
             print(f"Found new: {item['name']}")
-        if new_items and not announce(new_items, f"@everyone 🚨 New Stock at {site['name']}!",
+        if new_items and not announce(new_items, f"🚨 New Stock at {site['name']}!",
                                       lambda sent: mark_seen(seen_db, site, sent)):
             all_sent = False
 
         restocked = find_restocks(site, items, stock_db, {item['id'] for item in new_items}, now)
         for item in restocked:
             print(f"Restocked: {item['name']} ({', '.join(item['back']) or 'back in stock'})")
-        if restocked and not announce(restocked, f"@everyone 🔄 Restock at {site['name']}!",
+        if restocked and not announce(restocked, f"🔄 Restock at {site['name']}!",
                                       lambda sent: record_stock(stock_db, site, sent)):
             all_sent = False
 
