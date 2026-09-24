@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urljoin, unquote
 # ==========================================
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 DATABASE_FILE = "seen_products.json"
+# Sites currently failing (or password-locked), and since when
 STATUS_FILE = "site_status.json"
 # What was in stock at the last check, per site and product: Shopify variant ids, or '*'
 # for a web-page product that isn't marked sold out. Compared each run to ping restocks.
@@ -80,6 +81,8 @@ SITES = [
     {'name': 'Plus81', 'url': 'https://www.plus81.id/en/collections/vuja-de', 'type': 'shopify'},
     {'name': 'Attic Sendai', 'url': 'https://attic-sendai.com/en/collections/vuja-de', 'type': 'shopify'},
     {'name': 'Chinatown Country Club', 'url': 'https://chinatowncountryclub.com/collections/vuja-de', 'type': 'shopify'},
+    # The brand's own store: password-locked for days before a drop (see StoreLocked)
+    {'name': 'Vuja De Official', 'url': 'https://www.vujade-studio.com/collections/all', 'type': 'shopify'},
 
     # --- CUSTOM SITES (Manual CSS Selectors) ---
     # Komune (Headless/WooCommerce) -> product hrefs keep the URL-encoded é (/shop/vuja-d%C3%A9/...)
@@ -303,36 +306,55 @@ def post_notice(title, lines, color):
     embed = {"title": title, "description": "\n".join(lines)[:4096], "color": color, "footer": {"text": "Vuja De Monitor"}}
     return delivered(post_to_discord({"embeds": [embed], "allowed_mentions": {"parse": []}}))
 
-def update_site_health(status_db, failures, now):
+def update_site_health(status_db, failures, locked, now):
     """Warn once a site has been failing for FAILURE_ALERT_AFTER, and again when it recovers.
 
-    failures maps each site that failed this run to the reason. Returns False
-    if a notice could not be sent (it is retried next run).
+    A password-locked store isn't failing: it gets a 🔒 notice straight away and a 🔓 one
+    once a check gets through again. While it is locked, other errors (a rate limit, say)
+    don't warn, since it can't be told whether it is still locked.
+
+    failures maps each site that failed this run to the reason; locked holds the stores
+    found behind their password page. Returns False if a notice could not be sent (it is
+    retried next run).
     """
     site_names = [site['name'] for site in SITES]
     for name in list(status_db):
         if name not in site_names:
             del status_db[name]  # site was removed from SITES
 
-    to_warn, recovered = [], []
+    to_warn, recovered, to_lock, unlocked = [], [], [], []
     for name in site_names:
         entry = status_db.get(name)
-        if name in failures:
+        if name in locked:
+            if entry is None or 'locked_since' not in entry:
+                entry = status_db[name] = {'locked_since': now.isoformat(timespec='seconds'), 'alerted': False}
+            if not entry['alerted']:
+                to_lock.append(name)
+        elif name in failures:
+            if entry is not None and 'locked_since' in entry:
+                continue
             if entry is None:
                 entry = status_db[name] = {'failing_since': now.isoformat(timespec='seconds'), 'alerted': False}
             if not entry['alerted'] and now - datetime.fromisoformat(entry['failing_since']) >= FAILURE_ALERT_AFTER:
                 to_warn.append(name)
         elif entry is not None:
-            if entry['alerted']:
-                recovered.append(name)
-            else:
+            if not entry['alerted']:
                 del status_db[name]
+            elif 'locked_since' in entry:
+                unlocked.append(name)
+            else:
+                recovered.append(name)
 
-    since = lambda name: f"{datetime.fromisoformat(status_db[name]['failing_since']):%b %d %H:%M} UTC"
+    def since(name):
+        entry = status_db[name]
+        return f"{datetime.fromisoformat(entry.get('locked_since') or entry['failing_since']):%b %d %H:%M} UTC"
+
     warn_lines = [f"**{name}**: {failures[name][:200]} (failing since {since(name)})" for name in to_warn]
     recovered_lines = [f"**{name}** (was failing since {since(name)})" for name in recovered]
+    lock_lines = [f"**{name}** is password-locked (a drop is usually coming)" for name in to_lock]
+    unlock_lines = [f"**{name}** is open again (locked since {since(name)})" for name in unlocked]
     if not DISCORD_WEBHOOK_URL:
-        for line in warn_lines + recovered_lines:
+        for line in warn_lines + recovered_lines + lock_lines + unlock_lines:
             print(f"  Dry run, would post: {line}")
         return True
 
@@ -346,6 +368,18 @@ def update_site_health(status_db, failures, now):
     if recovered:
         if post_notice("✅ Working again", recovered_lines, 0x2ECC71):
             for name in recovered:
+                del status_db[name]
+        else:
+            all_sent = False
+    if to_lock:
+        if post_notice("🔒 Store locked", lock_lines, 0x95A5A6):
+            for name in to_lock:
+                status_db[name]['alerted'] = True
+        else:
+            all_sent = False
+    if unlocked:
+        if post_notice("🔓 Store open again", unlock_lines, 0x3498DB):
+            for name in unlocked:
                 del status_db[name]
         else:
             all_sent = False
@@ -401,6 +435,10 @@ def is_sold_out_item(item, link_tag, raw_name_text):
     status_blob = normalize_text(' '.join(status_fields)).lower()
     return any(marker in status_blob for marker in SOLD_OUT_MARKERS)
 
+class StoreLocked(Exception):
+    """A Shopify store behind its password page (HTTP 401), as Vuja De's own store is for
+    days before a drop. Not a failure: it gets a 🔒 notice, and 🔓 once it opens."""
+
 def fetch_shopify(site):
     """Return every product in the collection. Raises if the store can't be read."""
     # limit=250 is the most Shopify returns per page (the default is only 30)
@@ -409,8 +447,10 @@ def fetch_shopify(site):
     r = requests.get(json_url, headers=HEADERS, timeout=30, impersonate="chrome")
     if r.status_code in RATE_LIMIT_STATUSES:
         raise RuntimeError(f"rate limited by store (HTTP {r.status_code})")
-    if r.status_code != 200 or '/password' in str(r.url):
-        raise RuntimeError(f"store locked or unavailable (HTTP {r.status_code})")
+    if r.status_code == 401 or '/password' in str(r.url):
+        raise StoreLocked()
+    if r.status_code != 200:
+        raise RuntimeError(f"store unavailable (HTTP {r.status_code})")
     # Prices come back in the visitor's local currency, which Shopify names in this cookie
     try:
         currency = r.cookies.get('cart_currency')
@@ -541,6 +581,7 @@ if __name__ == "__main__":
     stock_db = load_json(STOCK_FILE)
     now = datetime.now(timezone.utc)
     failures = {}
+    locked = set()
     all_sent = True
     for site in SITES:
         try:
@@ -548,6 +589,10 @@ if __name__ == "__main__":
                 items = fetch_shopify(site)
             else:
                 items = fetch_custom(site)
+        except StoreLocked:
+            print(f"  {site['name']} is password-locked")
+            locked.add(site['name'])
+            continue
         except Exception as e:
             reason = str(e).split(' See https://curl.se')[0]  # drop curl's generic help link
             print(f"  Skipping {site['name']}: {reason}")
@@ -580,7 +625,7 @@ if __name__ == "__main__":
     for name in list(stock_db):
         if name not in {site['name'] for site in SITES}:
             del stock_db[name]  # site was removed from SITES
-    if not update_site_health(status_db, failures, now):
+    if not update_site_health(status_db, failures, locked, now):
         all_sent = False
     save_json(DATABASE_FILE, seen_db)
     save_json(STATUS_FILE, status_db)
