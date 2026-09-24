@@ -14,6 +14,9 @@ from urllib.parse import urlparse, urljoin, unquote
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 DATABASE_FILE = "seen_products.json"
 STATUS_FILE = "site_status.json"
+# What was in stock at the last check, per site and product: Shopify variant ids, or '*'
+# for a web-page product that isn't marked sold out. Compared each run to ping restocks.
+STOCK_FILE = "stock_state.json"
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -29,6 +32,9 @@ RATE_LIMIT_STATUSES = (429, 503)
 # A site that keeps failing this long gets a plain (no @everyone) Discord
 # warning, and a follow-up once it works again.
 FAILURE_ALERT_AFTER = timedelta(hours=2)
+
+# A product missing from its listing this long is dropped from the stock record
+FORGET_MISSING_AFTER = timedelta(days=60)
 
 # Discord allows 10 embeds and 6000 embed characters per message.
 MAX_EMBEDS_PER_MESSAGE = 10
@@ -100,9 +106,9 @@ def load_json(path):
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
-def save_json(path, data):
+def save_json(path, data, sort_keys=False):
     with open(path, 'w') as f:
-        json.dump(data, f, indent=4)
+        json.dump(data, f, indent=4, sort_keys=sort_keys)
 
 def post_to_discord(payload):
     """Send one webhook message, waiting out Discord's rate limits.
@@ -153,11 +159,16 @@ def product_embed(item):
         "color": 0, # Black for Vuja De
         "footer": {"text": "Vuja De Monitor"},
     }
+    fields = []
+    if item.get('back'):
+        # A restock: which sizes came back, ahead of the usual details
+        fields.append({"name": "Back in stock", "value": ", ".join(item['back'])[:1024], "inline": False})
+    elif 'back' in item:
+        embed['description'] = "Back in stock"
     product = item.get('product')
     if product:
         # Shopify listing: add price, options (sold-out values struck through) and photo
         variants = product.get('variants') or []
-        fields = []
         prices = sorted({float(v['price']) for v in variants if v.get('price')})
         if prices:
             fields.append({"name": "Price", "value": format_price(prices, item.get('currency')), "inline": True})
@@ -170,13 +181,13 @@ def product_embed(item):
             shown = ", ".join(v if v in in_stock else f"~~{v}~~" for v in values)
             name = option.get('name') or 'Option'
             fields.append({"name": OPTION_LABELS.get(name.strip().lower(), name)[:256], "value": shown[:1024], "inline": True})
-        if fields:
-            embed['fields'] = fields[:25]
         if not any(v.get('available') for v in variants):
             embed['description'] = "Sold out right now"
         images = product.get('images') or []
         if images and images[0].get('src'):
             embed['thumbnail'] = {"url": images[0]['src']}
+    if fields:
+        embed['fields'] = fields[:25]
     return embed
 
 def embed_chars(embed):
@@ -200,33 +211,84 @@ def discord_batches(items):
 def mark_seen(seen_db, site, items):
     seen_db.setdefault(site['name'], []).extend(item['id'] for item in items)
 
-def announce(site, new_items, seen_db):
-    """Ping Discord about new items, marking each seen only once Discord accepts it.
+def announce(items, heading, on_sent):
+    """Ping Discord about items under one heading, calling on_sent(items) for each batch
+    Discord accepts, so nothing is recorded as announced before it really is.
 
-    Returns False if anything could not be sent; those items stay unseen and
-    are retried next run.
+    Returns False if anything could not be sent; those items are retried next run.
     """
     if not DISCORD_WEBHOOK_URL:
-        print("  Dry run: not sending or marking as seen")
+        print("  Dry run: not sending")
         return True
-    content = f"@everyone 🚨 New Stock at {site['name']}!"
     all_sent = True
-    for batch in discord_batches(new_items):
-        status = post_to_discord({"content": content, "embeds": batch['embeds']})
+    for batch in discord_batches(items):
+        status = post_to_discord({"content": heading, "embeds": batch['embeds']})
         if delivered(status):
             print(f"  Sent {len(batch['items'])} to Discord")
-            mark_seen(seen_db, site, batch['items'])
+            on_sent(batch['items'])
             continue
         if status != 400:
             all_sent = False  # outage, rate limit or broken webhook: retry next run
             continue
         # Discord refused the embeds themselves, so fall back to one plain message per item
         for item in batch['items']:
-            fallback = post_to_discord({"content": f"{content}\n**{item['name']}**\n{item['link']}"[:2000]})
+            back = f"\nBack in stock: {', '.join(item['back'])}" if item.get('back') else ''
+            fallback = post_to_discord({"content": f"{heading}\n**{item['name']}**{back}\n{item['link']}"[:2000]})
             if delivered(fallback) or fallback == 400:
-                mark_seen(seen_db, site, [item])  # refused twice: give up rather than retry forever
+                on_sent([item])  # refused twice: give up rather than retry forever
             all_sent = all_sent and delivered(fallback)
     return all_sent
+
+def pingable(site, item):
+    """Web pages only count a product once it is in stock; Shopify lists sold-out ones too."""
+    return site['type'] == 'shopify' or bool(item['stock'])
+
+def record_stock(stock_db, site, items):
+    for item in items:
+        stock_db[site['name']][item['id']] = {'in_stock': sorted(item['stock'])}
+
+def find_restocks(site, items, stock_db, new_ids, now):
+    """Compare what is in stock now with the last check. Returns the items with a size (or,
+    on a web page, the whole product) back in stock, each with 'back' naming the sizes.
+
+    Everything else is recorded straight away; a restocked item is only recorded once its
+    ping is delivered (record_stock), so a failed ping is retried next run. New products are
+    pinged as new stock instead, and a site's first check just records the starting point.
+    """
+    if site['name'] not in stock_db:
+        stock_db[site['name']] = {}
+        record_stock(stock_db, site, items)
+        return []
+    state = stock_db[site['name']]
+    restocked = []
+    for item in items:
+        entry = state.get(item['id'])
+        if entry is None or item['id'] in new_ids:
+            record_stock(stock_db, site, [item])
+            continue
+        back = set(item['stock']) - set(entry['in_stock'])
+        if back:
+            # Sizes in the store's own order; a lone 'Default Title' variant is the whole product
+            labels = [label for key, label in item['stock'].items() if key in back and label and label != 'Default Title']
+            restocked.append(dict(item, back=labels))
+        else:
+            record_stock(stock_db, site, [item])
+
+    listed = {item['id'] for item in items}
+    for key, entry in list(state.items()):
+        if key in listed:
+            continue
+        if 'missing_since' not in entry:
+            # A Shopify feed drops a product that is hidden or unpublished (some stores hide
+            # sold-out ones), so count it as sold out and ping if it comes back. An empty feed
+            # is more likely a hidden collection, and web pages can miss cards, so those keep
+            # the last known stock.
+            if site['type'] == 'shopify' and items:
+                entry['in_stock'] = []
+            entry['missing_since'] = now.isoformat(timespec='seconds')
+        elif now - datetime.fromisoformat(entry['missing_since']) > FORGET_MISSING_AFTER:
+            del state[key]
+    return restocked
 
 def post_notice(title, lines, color):
     """Post a status message without pinging anyone. Returns True once Discord accepts it."""
@@ -356,11 +418,14 @@ def fetch_shopify(site):
             'link': f"{base_url}/products/{p['handle']}",
             'product': p,
             'currency': currency,
+            # In-stock variants (id -> title, e.g. "46 / Black"), in the store's order
+            'stock': {str(v['id']): v.get('title') or '' for v in p.get('variants') or [] if v.get('available')},
         })
     return products
 
 def fetch_custom(site):
-    """Return the in-stock products on the page. Raises if the page can't be read."""
+    """Return the products on the page, sold-out ones with empty 'stock'. Raises if the page
+    can't be read."""
     print(f"Checking Custom HTML: {site['name']}...")
     r = None
     for attempt in range(2):
@@ -446,12 +511,12 @@ def fetch_custom(site):
             # 5. CLEAN + FILTER
             raw_name_text = name_text
             name_text = clean_product_name(name_text, href)
-            if is_sold_out_item(item, link_tag, raw_name_text):
-                continue
+            sold_out = is_sold_out_item(item, link_tag, raw_name_text)
 
-            # 6. COLLECT (the href is the product's ID in the database)
+            # 6. COLLECT (the href is the product's ID in the database). Sold-out cards are kept
+            # so a later restock can be noticed; '*' stands for "the product is in stock".
             if len(name_text) > 2:
-                products.append({'id': href, 'name': name_text, 'link': href})
+                products.append({'id': href, 'name': name_text, 'link': href, 'stock': {} if sold_out else {'*': ''}})
 
         except Exception:
             continue
@@ -465,6 +530,8 @@ if __name__ == "__main__":
         print("No DISCORD_WEBHOOK_URL set: dry run, nothing is sent and new products are not marked as seen.")
     seen_db = load_json(DATABASE_FILE)
     status_db = load_json(STATUS_FILE)
+    stock_db = load_json(STOCK_FILE)
+    now = datetime.now(timezone.utc)
     failures = {}
     all_sent = True
     for site in SITES:
@@ -481,21 +548,35 @@ if __name__ == "__main__":
 
         if site['name'] not in seen_db:
             # First check of a newly added retailer: record what it already lists instead of pinging it all
-            seen_db[site['name']] = [item['id'] for item in items]
-            print(f"  First check: recorded {len(items)} current products without pinging")
+            seen_db[site['name']] = [item['id'] for item in items if pingable(site, item)]
+            stock_db.pop(site['name'], None)
+            find_restocks(site, items, stock_db, set(), now)  # starting point for restocks
+            print(f"  First check: recorded {len(seen_db[site['name']])} current products without pinging")
             continue
 
         seen = set(seen_db[site['name']])
-        new_items = [item for item in items if item['id'] not in seen]
+        new_items = [item for item in items if item['id'] not in seen and pingable(site, item)]
         for item in new_items:
             print(f"Found new: {item['name']}")
-        if new_items and not announce(site, new_items, seen_db):
+        if new_items and not announce(new_items, f"@everyone 🚨 New Stock at {site['name']}!",
+                                      lambda sent: mark_seen(seen_db, site, sent)):
             all_sent = False
 
-    if not update_site_health(status_db, failures, datetime.now(timezone.utc)):
+        restocked = find_restocks(site, items, stock_db, {item['id'] for item in new_items}, now)
+        for item in restocked:
+            print(f"Restocked: {item['name']} ({', '.join(item['back']) or 'back in stock'})")
+        if restocked and not announce(restocked, f"@everyone 🔄 Restock at {site['name']}!",
+                                      lambda sent: record_stock(stock_db, site, sent)):
+            all_sent = False
+
+    for name in list(stock_db):
+        if name not in {site['name'] for site in SITES}:
+            del stock_db[name]  # site was removed from SITES
+    if not update_site_health(status_db, failures, now):
         all_sent = False
     save_json(DATABASE_FILE, seen_db)
     save_json(STATUS_FILE, status_db)
+    save_json(STOCK_FILE, stock_db, sort_keys=True)
     if not all_sent:
         print("Some Discord messages could not be sent; they will be retried next run.")
         sys.exit(1)
