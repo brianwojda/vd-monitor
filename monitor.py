@@ -16,7 +16,8 @@ DATABASE_FILE = "seen_products.json"
 # Sites currently failing (or password-locked), and since when
 STATUS_FILE = "site_status.json"
 # What was in stock at the last check, per site and product: Shopify variant ids, or '*'
-# for a web-page product that isn't marked sold out. Compared each run to ping restocks.
+# for a web-page product that isn't marked sold out, plus a Shopify product's lowest price.
+# Compared each run to ping restocks and price drops.
 STOCK_FILE = "stock_state.json"
 
 HEADERS = {
@@ -36,6 +37,11 @@ FAILURE_ALERT_AFTER = timedelta(hours=2)
 
 # A product missing from its listing this long is dropped from the stock record
 FORGET_MISSING_AFTER = timedelta(days=60)
+
+# An in-stock product whose lowest price falls this much since the last check pings as a
+# price drop. Most stores' prices come back converted to the visitor's currency and drift
+# with exchange rates (well under 1% between checks); real markdowns are 20-50% steps.
+PRICE_DROP_THRESHOLD = 0.10
 
 # Discord allows 10 embeds and 6000 embed characters per message.
 MAX_EMBEDS_PER_MESSAGE = 10
@@ -168,12 +174,15 @@ def product_embed(item):
         fields.append({"name": "Back in stock", "value": ", ".join(item['back'])[:1024], "inline": False})
     elif 'back' in item:
         embed['description'] = "Back in stock"
+    if item.get('drop'):
+        # A price drop: new and old price, in place of the usual price field
+        fields.append({"name": "Price drop", "value": item['drop'], "inline": False})
     product = item.get('product')
     if product:
         # Shopify listing: add price, options (sold-out values struck through) and photo
         variants = product.get('variants') or []
         prices = sorted({float(v['price']) for v in variants if v.get('price')})
-        if prices:
+        if prices and not item.get('drop'):
             fields.append({"name": "Price", "value": format_price(prices, item.get('currency')), "inline": True})
         for i, option in enumerate(product.get('options') or []):
             values = [str(v) for v in option.get('values') or [] if str(v).strip()]
@@ -241,8 +250,9 @@ def announce(items, heading, on_sent):
         # Discord refused the embeds themselves, so fall back to one plain message per item
         for item in batch['items']:
             mention = '' if notified else '@everyone '
-            back = f"\nBack in stock: {', '.join(item['back'])}" if item.get('back') else ''
-            fallback = post_to_discord({"content": f"{mention}{heading}\n**{item['name']}**{back}\n{item['link']}"[:2000]})
+            note = (f"\nBack in stock: {', '.join(item['back'])}" if item.get('back')
+                    else f"\nPrice drop: {item['drop']}" if item.get('drop') else '')
+            fallback = post_to_discord({"content": f"{mention}{heading}\n**{item['name']}**{note}\n{item['link']}"[:2000]})
             if delivered(fallback):
                 notified = True
             if delivered(fallback) or fallback == 400:
@@ -255,8 +265,46 @@ def pingable(site, item):
     return site['type'] == 'shopify' or bool(item['stock'])
 
 def record_stock(stock_db, site, items):
+    state = stock_db[site['name']]
     for item in items:
-        stock_db[site['name']][item['id']] = {'in_stock': sorted(item['stock'])}
+        entry = state.setdefault(item['id'], {})
+        entry['in_stock'] = sorted(item['stock'])
+        entry.pop('missing_since', None)
+
+def record_price(stock_db, site, items):
+    state = stock_db[site['name']]
+    for item in items:
+        entry = state.setdefault(item['id'], {'in_stock': sorted(item['stock'])})
+        entry['price'], entry['currency'] = item['price'], item.get('currency')
+
+def find_price_drops(site, items, stock_db, new_ids):
+    """Products whose lowest price fell by PRICE_DROP_THRESHOLD or more since the last check
+    while a size is in stock, each with 'drop' describing it (e.g. "690 USD (was 1,150,
+    -40%)"). A drop is only recorded once its ping is delivered (record_price), so a failed
+    ping is retried next run.
+
+    Prices are only compared in the same currency. Moves under 1% aren't recorded, so the
+    file doesn't change every time an exchange rate does. A markdown while sold out is
+    recorded quietly; the restock ping then shows the new price.
+    """
+    state = stock_db.get(site['name'])
+    if state is None:
+        return []
+    drops = []
+    for item in items:
+        entry = state.get(item['id'])
+        price = item.get('price')
+        if entry is None or not price:
+            continue
+        old = entry.get('price')
+        if not old or entry.get('currency') != item.get('currency') or item['id'] in new_ids:
+            record_price(stock_db, site, [item])
+        elif price <= old * (1 - PRICE_DROP_THRESHOLD) and item['stock']:
+            percent = round((1 - price / old) * 100)
+            drops.append(dict(item, drop=f"{format_price([price], item.get('currency'))} (was {format_price([old], None)}, −{percent}%)"))
+        elif abs(price - old) > old * 0.01:
+            record_price(stock_db, site, [item])
+    return drops
 
 def find_restocks(site, items, stock_db, new_ids, now):
     """Compare what is in stock now with the last check. Returns the items with a size (or,
@@ -468,6 +516,8 @@ def fetch_shopify(site):
             'currency': currency,
             # In-stock variants (id -> title, e.g. "46 / Black"), in the store's order
             'stock': {str(v['id']): v.get('title') or '' for v in p.get('variants') or [] if v.get('available')},
+            # Lowest price across all sizes, sold out or not, so a size selling out isn't a price change
+            'price': min((float(v['price']) for v in p.get('variants') or [] if v.get('price')), default=None),
         })
     return products
 
@@ -603,7 +653,9 @@ if __name__ == "__main__":
             # First check of a newly added retailer: record what it already lists instead of pinging it all
             seen_db[site['name']] = [item['id'] for item in items if pingable(site, item)]
             stock_db.pop(site['name'], None)
-            find_restocks(site, items, stock_db, set(), now)  # starting point for restocks
+            # Starting point for restocks and price drops
+            find_restocks(site, items, stock_db, set(), now)
+            find_price_drops(site, items, stock_db, set())
             print(f"  First check: recorded {len(seen_db[site['name']])} current products without pinging")
             continue
 
@@ -615,11 +667,19 @@ if __name__ == "__main__":
                                       lambda sent: mark_seen(seen_db, site, sent)):
             all_sent = False
 
-        restocked = find_restocks(site, items, stock_db, {item['id'] for item in new_items}, now)
+        new_ids = {item['id'] for item in new_items}
+        restocked = find_restocks(site, items, stock_db, new_ids, now)
         for item in restocked:
             print(f"Restocked: {item['name']} ({', '.join(item['back']) or 'back in stock'})")
         if restocked and not announce(restocked, f"🔄 Restock at {site['name']}!",
                                       lambda sent: record_stock(stock_db, site, sent)):
+            all_sent = False
+
+        drops = find_price_drops(site, items, stock_db, new_ids)
+        for item in drops:
+            print(f"Price drop: {item['name']} ({item['drop']})")
+        if drops and not announce(drops, f"💸 Price drop at {site['name']}!",
+                                  lambda sent: record_price(stock_db, site, sent)):
             all_sent = False
 
     for name in list(stock_db):
