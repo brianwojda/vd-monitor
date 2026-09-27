@@ -1,1 +1,26 @@
-{}
+{
+    "Why are you here?": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    },
+    "Addicted Seoul": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    },
+    "Mars": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    },
+    "Plus81": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    },
+    "Attic Sendai": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    },
+    "Chinatown Country Club": {
+        "failing_since": "2026-09-27T12:00:20+00:00",
+        "alerted": false
+    }
+}
