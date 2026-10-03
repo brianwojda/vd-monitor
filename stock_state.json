@@ -126,7 +126,9 @@
             ]
         },
         "https://www.beams.co.jp/item/international_gallery_beams/fashiongoods/23520112241/?color=19": {
-            "in_stock": []
+            "in_stock": [
+                "*"
+            ]
         },
         "https://www.beams.co.jp/item/international_gallery_beams/jacket/23160291241/?color=28": {
             "in_stock": [
