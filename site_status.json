@@ -1,1 +1,6 @@
-{}
+{
+    "Komune": {
+        "failing_since": "2026-10-07T17:40:15+00:00",
+        "alerted": false
+    }
+}
