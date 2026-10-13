@@ -2,5 +2,9 @@
     "Vuja De Official": {
         "locked_since": "2026-10-09T08:30:25+00:00",
         "alerted": true
+    },
+    "Mars": {
+        "failing_since": "2026-10-13T06:40:17+00:00",
+        "alerted": false
     }
 }
