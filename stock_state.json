@@ -129,7 +129,9 @@
             ]
         },
         "https://www.beams.co.jp/item/international_gallery_beams/blouson/23180554241/?color=75": {
-            "in_stock": []
+            "in_stock": [
+                "*"
+            ]
         },
         "https://www.beams.co.jp/item/international_gallery_beams/coat/23190134241/?color=19": {
             "in_stock": [
