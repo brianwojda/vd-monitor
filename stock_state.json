@@ -398,7 +398,9 @@
             ]
         },
         "https://komune.space/shop/vuja-d%C3%A9/deerskin-kira-leather-drape-blouson-aw26": {
-            "in_stock": []
+            "in_stock": [
+                "*"
+            ]
         },
         "https://komune.space/shop/vuja-d%C3%A9/dylan-flared-denim-pants-ss26": {
             "in_stock": [
