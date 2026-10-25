@@ -623,9 +623,7 @@
             ]
         },
         "https://loftman.co.jp/shop/g/g822V131422BLK4800/": {
-            "in_stock": [
-                "*"
-            ]
+            "in_stock": []
         },
         "https://loftman.co.jp/shop/g/g822V132261BLK4600/": {
             "in_stock": [
@@ -643,9 +641,7 @@
             ]
         },
         "https://loftman.co.jp/shop/g/g822V134114BLKOS00/": {
-            "in_stock": [
-                "*"
-            ]
+            "in_stock": []
         }
     },
     "Mars": {
