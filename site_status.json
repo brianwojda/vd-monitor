@@ -1,1 +1,6 @@
-{}
+{
+    "BEAMS (Japan)": {
+        "failing_since": "2026-10-26T23:10:16+00:00",
+        "alerted": false
+    }
+}
