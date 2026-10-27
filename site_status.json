@@ -1,1 +1,6 @@
-{}
+{
+    "Plus81": {
+        "failing_since": "2026-10-27T16:30:20+00:00",
+        "alerted": false
+    }
+}
