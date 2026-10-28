@@ -1,1 +1,18 @@
-{}
+{
+    "Addicted Seoul": {
+        "failing_since": "2026-10-28T00:30:19+00:00",
+        "alerted": false
+    },
+    "Mars": {
+        "failing_since": "2026-10-28T00:30:19+00:00",
+        "alerted": false
+    },
+    "Chinatown Country Club": {
+        "failing_since": "2026-10-28T00:30:19+00:00",
+        "alerted": false
+    },
+    "Vuja De Official": {
+        "failing_since": "2026-10-28T00:30:19+00:00",
+        "alerted": false
+    }
+}
