@@ -280,9 +280,7 @@
     "Chinatown Country Club": {
         "8954694336665": {
             "currency": "USD",
-            "in_stock": [
-                "48993967210649"
-            ],
+            "in_stock": [],
             "price": 541.0
         },
         "8954694729881": {
