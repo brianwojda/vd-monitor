@@ -224,7 +224,8 @@
             ]
         },
         "https://www.beams.co.jp/item/international_gallery_beams/fashiongoods/23520109241/?color=65": {
-            "in_stock": []
+            "in_stock": [],
+            "missing_since": "2026-11-02T04:00:22+00:00"
         },
         "https://www.beams.co.jp/item/international_gallery_beams/fashiongoods/23520112241/?color=19": {
             "in_stock": [
