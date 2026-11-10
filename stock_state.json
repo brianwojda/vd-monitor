@@ -1,5 +1,20 @@
 {
-    "Addicted Seoul": {},
+    "Addicted Seoul": {
+        "8523477942455": {
+            "currency": null,
+            "in_stock": [
+                "47271453196471"
+            ],
+            "price": 315000.0
+        },
+        "8523481088183": {
+            "currency": null,
+            "in_stock": [
+                "47271486292151"
+            ],
+            "price": 285000.0
+        }
+    },
     "Adelaide Addition": {
         "7653134958689": {
             "currency": "JPY",
