@@ -1,1 +1,6 @@
-{}
+{
+    "Loftman": {
+        "failing_since": "2026-11-11T12:50:28+00:00",
+        "alerted": false
+    }
+}
