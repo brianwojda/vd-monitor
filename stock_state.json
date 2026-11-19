@@ -434,28 +434,28 @@
         "8954694336665": {
             "currency": "USD",
             "in_stock": [],
-            "price": 519.0
+            "price": 513.0
         },
         "8954694729881": {
             "currency": "USD",
             "in_stock": [
                 "48993970389145"
             ],
-            "price": 838.0
+            "price": 829.0
         },
         "8954695712921": {
             "currency": "USD",
             "in_stock": [
                 "48993975107737"
             ],
-            "price": 680.0
+            "price": 673.0
         },
         "8954696106137": {
             "currency": "USD",
             "in_stock": [
                 "48993976975513"
             ],
-            "price": 360.0
+            "price": 356.0
         }
     },
     "Komune": {
