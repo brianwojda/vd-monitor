@@ -2,9 +2,5 @@
     "Vuja De Official": {
         "locked_since": "2026-11-18T03:50:21+00:00",
         "alerted": true
-    },
-    "Loftman": {
-        "failing_since": "2026-11-21T06:50:22+00:00",
-        "alerted": false
     }
 }
