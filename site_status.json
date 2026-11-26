@@ -2,9 +2,5 @@
     "Addicted Seoul": {
         "locked_since": "2026-11-25T11:00:23+00:00",
         "alerted": true
-    },
-    "Attic Sendai": {
-        "failing_since": "2026-11-25T21:50:16+00:00",
-        "alerted": true
     }
 }
