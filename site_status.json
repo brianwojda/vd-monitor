@@ -2,5 +2,9 @@
     "Addicted Seoul": {
         "locked_since": "2026-11-25T11:00:23+00:00",
         "alerted": true
+    },
+    "Komune": {
+        "failing_since": "2026-11-26T18:00:24+00:00",
+        "alerted": false
     }
 }
