@@ -2,5 +2,9 @@
     "Addicted Seoul": {
         "locked_since": "2026-11-25T11:00:23+00:00",
         "alerted": true
+    },
+    "BEAMS (Japan)": {
+        "failing_since": "2026-11-28T19:50:27+00:00",
+        "alerted": false
     }
 }
